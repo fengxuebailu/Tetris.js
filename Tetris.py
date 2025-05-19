@@ -96,7 +96,7 @@ def evaluate_position(board, cleared_lines):
 def find_best_move(board, piece):
     """找到最佳落点"""
     best_score = float('-inf')
-    best_move = None
+    best_move = [3, 0]  # 默认值，防止返回None
     best_rotation = 0
     
     current_piece = piece
@@ -127,6 +127,18 @@ def find_best_move(board, piece):
 
 def main(stdscr):
     curses.curs_set(0)
+    
+    # 检查窗口大小
+    height, width = stdscr.getmaxyx()
+    if height < 25 or width < 50:
+        stdscr.clear()
+        stdscr.addstr(0, 0, "错误：终端窗口太小！")
+        stdscr.addstr(1, 0, f"当前大小：{width}x{height}，需要至少：50x25")
+        stdscr.addstr(3, 0, "请调整终端窗口大小后重新运行。")
+        stdscr.refresh()
+        stdscr.getch()
+        return
+        
     board = [[0 for _ in range(10)] for _ in range(20)]
     current = random.choice(shapes)
     offset = [3, 0]

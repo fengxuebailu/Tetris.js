@@ -1,0 +1,921 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+俄罗斯方块监督学习系统
+使用神经网络从专家系统收集的数据中学习
+"""
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+import random
+from copy import deepcopy
+import sys
+import os
+import time
+import json
+
+# 从Tetris.py导入游戏核心功能，不导入curses相关的内容
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from Tetris import shapes, rotate, check, join_matrix, clear_rows, get_height, count_holes, get_bumpiness
+
+class TetrisDataset(Dataset):
+    """用于存储和加载俄罗斯方块游戏状态和对应的最佳移动"""
+    def __init__(self, game_states, moves):
+        self.game_states = torch.FloatTensor(game_states)  # 游戏状态张量
+        self.moves = torch.FloatTensor(moves)  # 对应的最佳移动张量
+        print(f"创建数据集: {len(self.game_states)} 个样本")
+        print(f"状态张量形状: {self.game_states.shape}")
+        print(f"移动张量形状: {self.moves.shape}")
+
+    def __len__(self):
+        return len(self.game_states)
+
+    def __getitem__(self, idx):
+        return self.game_states[idx], self.moves[idx]
+        
+    @staticmethod
+    def save_to_file(game_states, moves, filename='tetris_training_data.npz'):
+        """将收集的数据保存到文件"""
+        np.savez(filename, 
+                 states=game_states, 
+                 moves=moves)
+        print(f"训练数据已保存到 {filename}")
+        
+    @staticmethod
+    def load_from_file(filename='tetris_training_data.npz'):
+        """从文件加载训练数据"""
+        try:
+            data = np.load(filename)
+            return data['states'], data['moves']
+        except Exception as e:
+            print(f"加载训练数据出错: {e}")
+            return None, None
+
+class TetrisNet(nn.Module):
+    def __init__(self):
+        super(TetrisNet, self).__init__()
+        # 输入特征: 游戏板状态(200)和当前方块(16)
+        
+        # 更复杂的网络结构，包含更多层和dropout防止过拟合
+        self.board_features = nn.Sequential(
+            nn.Linear(200, 256),
+            nn.BatchNorm1d(256),
+            nn.LeakyReLU(0.1),
+            nn.Dropout(0.2),
+            nn.Linear(256, 128)
+        )
+        
+        self.piece_features = nn.Sequential(
+            nn.Linear(16, 32),
+            nn.BatchNorm1d(32),
+            nn.LeakyReLU(0.1),
+            nn.Linear(32, 16)
+        )
+        
+        self.combined_network = nn.Sequential(
+            nn.Linear(144, 128),  # 128 + 16 = 144
+            nn.BatchNorm1d(128),
+            nn.LeakyReLU(0.1),
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.LeakyReLU(0.1),
+            nn.Linear(64, 32),
+            nn.BatchNorm1d(32),
+            nn.LeakyReLU(0.1),
+            nn.Linear(32, 2)  # 输出: x位置, 旋转角度
+        )
+
+    def forward(self, x):
+        # 分离游戏板和当前方块的特征
+        board_input = x[:, :200]  # 前200个特征是游戏板
+        piece_input = x[:, 200:]  # 后16个特征是方块
+        
+        # 各自通过特征提取网络
+        board_feats = self.board_features(board_input)
+        piece_feats = self.piece_features(piece_input)
+        
+        # 合并特征并进行最终预测
+        combined = torch.cat([board_feats, piece_feats], dim=1)
+        return self.combined_network(combined)
+
+def load_weights():
+    """加载或创建权重"""
+    try:
+        with open('best_weights_evolved.json', 'r') as f:
+            weights = json.load(f)
+            # 确保所有值都是浮点数
+            return {k: float(v) for k, v in weights.items()}
+    except:
+        return {
+            'cleared_lines': 160.0,
+            'holes': -50.0,
+            'bumpiness': -20.0,
+            'height': -30.0
+        }
+
+class TetrisDataCollector:
+    def __init__(self, num_games=100, max_moves=200, timeout=60):
+        self.num_games = num_games
+        self.max_moves = max_moves  # 每个游戏的最大步数
+        self.timeout = timeout  # 每个游戏的最大运行时间(秒)
+        self.game_states = []
+        self.optimal_moves = []
+        
+    def collect_data(self):
+        """使用启发式方法收集游戏数据"""
+        print("开始收集数据...")
+        try:
+            # 使用之前进化算法得到的最佳权重
+            weights = load_weights()
+            print("成功加载权重:", weights)
+            
+            total_moves = 0
+            start_time = time.time()
+            
+            for game in range(self.num_games):
+                print(f"收集游戏数据 {game + 1}/{self.num_games}")
+                board = [[0 for _ in range(10)] for _ in range(20)]
+                moves_count = 0
+                game_start_time = time.time()
+                
+                # 限制每个游戏的时间
+                while moves_count < self.max_moves:
+                    if time.time() - game_start_time > self.timeout:
+                        print(f"游戏 {game + 1} 超时，已收集 {moves_count} 步")
+                        break
+                    
+                    # 随机选择一个方块
+                    current_piece = random.choice(shapes)
+                    
+                    # 使用简化版查找最佳移动
+                    move_data = self.find_best_move_optimized(board, current_piece, weights)
+                    
+                    if move_data is None:
+                        print(f"游戏 {game + 1} 无法继续移动")
+                        break
+                    
+                    # 保存游戏状态和最佳移动
+                    state_vector = self.create_state_vector(board, current_piece)
+                    self.game_states.append(state_vector)
+                    self.optimal_moves.append([
+                        move_data['x'],
+                        move_data['rotation']
+                    ])
+                    
+                    # 执行移动
+                    rotated_piece = deepcopy(current_piece)
+                    for _ in range(move_data['rotation']):
+                        rotated_piece = rotate(rotated_piece)
+                    
+                    # 更新游戏板
+                    join_matrix(board, rotated_piece, [move_data['x'], move_data['y']])
+                    board, _ = clear_rows(board)
+                    moves_count += 1
+                    total_moves += 1
+                    
+                    # 每20步打印进度
+                    if moves_count % 20 == 0:
+                        print(f"  游戏 {game + 1}: 已完成 {moves_count} 步")
+                        
+                print(f"游戏 {game + 1} 完成，收集了 {moves_count} 步，耗时: {time.time() - game_start_time:.1f}秒")
+                
+                # 检查总体超时
+                if time.time() - start_time > self.timeout * 2:
+                    print("数据收集总体时间过长，提前结束")
+                    break
+
+            # 转换为numpy数组并设定数据类型
+            print(f"完成数据收集，共收集 {total_moves} 步，{len(self.game_states)} 个状态")
+            print(f"总耗时: {time.time() - start_time:.1f}秒")
+            
+            game_states_array = np.array(self.game_states, dtype=np.float32)
+            optimal_moves_array = np.array(self.optimal_moves, dtype=np.float32)
+            
+            # 保存训练数据
+            TetrisDataset.save_to_file(game_states_array, optimal_moves_array)
+            
+            return game_states_array, optimal_moves_array
+        except Exception as e:
+            print(f"收集数据时发生错误: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            # 即使发生错误，也尝试返回已收集的数据
+            if len(self.game_states) > 0:
+                return np.array(self.game_states, dtype=np.float32), np.array(self.optimal_moves, dtype=np.float32)
+            raise
+
+    def create_state_vector(self, board, piece):
+        """创建游戏状态向量，确保方块向量大小一致"""
+        # 展平游戏板 (20x10 = 200)
+        board_vector = np.array(board, dtype=np.float32).flatten()
+        
+        # 将piece转换为4x4矩阵
+        piece_matrix = np.zeros((4, 4), dtype=np.float32)
+        piece = np.array(piece)
+        h, w = piece.shape
+        # 将piece放在4x4矩阵的中心
+        start_h = (4 - h) // 2
+        start_w = (4 - w) // 2
+        piece_matrix[start_h:start_h+h, start_w:start_w+w] = piece
+        piece_vector = piece_matrix.flatten()  # 4x4 = 16
+        
+        # 合并状态 (200 + 16 = 216)
+        return np.concatenate([board_vector, piece_vector])
+        
+    def find_best_move_optimized(self, board, piece, weights):
+        """优化版本的最佳移动查找算法，添加了超时检测和优化"""
+        best_score = float('-inf')
+        best_move = None
+        start_time = time.time()
+        
+        # 优化：根据方块形状决定需要测试的旋转次数
+        # 长条形状(I): 只需要2次旋转
+        # 方形(O): 只需要1次旋转
+        # 其他: 需要4次旋转
+        shape_type = "unknown"
+        if len(piece) == 1 and len(piece[0]) == 4:  # I形
+            max_rotations = 2
+            shape_type = "I"
+        elif len(piece) == 2 and len(piece[0]) == 2:  # O形
+            max_rotations = 1
+            shape_type = "O"
+        else:  # 其他形状
+            max_rotations = 4
+            shape_type = "other"
+        
+        # 优化：根据方块形状设置合理的x轴范围
+        width = len(piece[0])
+        min_x = 0
+        max_x = len(board[0]) - width
+        
+        if width == 4:  # I形水平方向
+            min_x = -1
+            max_x = len(board[0]) - 2
+        
+        # 限制评估的总时间
+        max_eval_time = 0.5  # 最多花0.5秒在一个方块上
+        
+        rotated_pieces = []
+        # 预计算所有可能的旋转
+        current = deepcopy(piece)
+        for r in range(max_rotations):
+            rotated_pieces.append(current)
+            current = rotate(current)
+            
+        # 开始评估所有位置
+        evaluated = 0
+        for rotation, current_piece in enumerate(rotated_pieces):
+            width = len(current_piece[0])
+            height = len(current_piece)
+            
+            # 调整这个形状的x范围
+            adjusted_min_x = max(-1, min_x)
+            adjusted_max_x = min(len(board[0]), max_x + 1)
+            
+            for x in range(adjusted_min_x, adjusted_max_x):
+                # 超时检测
+                if time.time() - start_time > max_eval_time:
+                    print(f"评估超时，已评估 {evaluated} 个位置")
+                    return best_move
+                
+                # 检查初始位置是否有效
+                if not check(board, current_piece, [x, 0]):
+                    continue
+                
+                evaluated += 1
+                
+                # 快速下落
+                y = 0
+                while y < len(board) and check(board, current_piece, [x, y+1]):
+                    y += 1
+                
+                # 创建临时板并放置方块
+                temp_board = [row[:] for row in board]
+                result = join_matrix(temp_board, current_piece, [x, y])
+                
+                # 检查放置是否成功
+                if result == False:  # join_matrix可能返回False表示放置失败
+                    continue
+                    
+                # 清除可能的行并评估
+                new_board, cleared = clear_rows(temp_board)
+                
+                # 计算评分
+                score = (weights['cleared_lines'] * cleared +
+                        weights['holes'] * count_holes(new_board) +
+                        weights['bumpiness'] * get_bumpiness(new_board) +
+                        weights['height'] * get_height(new_board))
+                
+                if score > best_score:
+                    best_score = score
+                    best_move = {
+                        'x': x,
+                        'y': y,
+                        'rotation': rotation
+                    }
+        
+        if best_move is None:
+            # 如果找不到最佳移动，尝试放宽条件
+            print("未找到有效移动，尝试第二轮搜索...")
+            # 这里可以放宽条件，例如不考虑分数，只要能放置就可以
+            for rotation, current_piece in enumerate(rotated_pieces):
+                for x in range(-2, len(board[0])+2):
+                    if check(board, current_piece, [x, 0]):
+                        y = 0
+                        while y < len(board) and check(board, current_piece, [x, y+1]):
+                            y += 1
+                        return {
+                            'x': x,
+                            'y': y,
+                            'rotation': rotation
+                        }
+            
+        return best_move
+            
+def train_network(game_states, moves, num_epochs=100, batch_size=64, learning_rate=0.001, patience=15):
+    """训练神经网络"""
+    # 创建数据集
+    dataset = TetrisDataset(game_states, moves)
+    
+    # 划分训练集和验证集
+    train_size = int(0.8 * len(dataset))
+    val_size = len(dataset) - train_size
+    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+    
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size)
+
+    # 初始化模型
+    model = TetrisNet()
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    
+    # 学习率调度器 - 当验证损失不再下降时降低学习率
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
+
+    print("开始训练模型...")
+    print(f"训练数据: {train_size} 个样本, 验证数据: {val_size} 个样本")
+    print(f"批次大小: {batch_size}, 最大轮数: {num_epochs}")
+
+    # 早停策略变量
+    best_val_loss = float('inf')
+    best_model = None
+    epochs_no_improve = 0
+
+    # 训练循环
+    start_time = time.time()
+    for epoch in range(num_epochs):
+        epoch_start_time = time.time()
+        
+        # 训练阶段
+        model.train()
+        train_loss = 0
+        for batch_states, batch_moves in train_loader:
+            # 前向传播
+            outputs = model(batch_states)
+            loss = criterion(outputs, batch_moves)
+
+            # 反向传播
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            train_loss += loss.item()
+
+        # 验证阶段
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for batch_states, batch_moves in val_loader:
+                outputs = model(batch_states)
+                loss = criterion(outputs, batch_moves)
+                val_loss += loss.item()
+        
+        # 计算平均损失
+        avg_train_loss = train_loss / len(train_loader)
+        avg_val_loss = val_loss / len(val_loader)
+        
+        # 更新学习率调度器
+        scheduler.step(avg_val_loss)
+        
+        # 记录时间和输出信息
+        epoch_time = time.time() - epoch_start_time
+        print(f'轮数 {epoch+1}/{num_epochs}, 训练损失: {avg_train_loss:.4f}, 验证损失: {avg_val_loss:.4f}, 耗时: {epoch_time:.2f}秒')
+        
+        # 检查是否有改进
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            best_model = model.state_dict().copy()
+            epochs_no_improve = 0
+            # 保存最佳模型
+            save_model(model, 'tetris_model_best.pth')
+        else:
+            epochs_no_improve += 1
+        
+        # 每10轮保存一次模型
+        if (epoch + 1) % 10 == 0:
+            save_model(model, f'tetris_model_epoch_{epoch+1}.pth')
+        
+        # 早停检查
+        if epochs_no_improve >= patience:
+            print(f"早停: {patience}轮内验证损失没有改善")
+            break
+    
+    # 恢复最佳模型
+    if best_model is not None:
+        model.load_state_dict(best_model)
+    
+    total_time = time.time() - start_time
+    print(f"训练完成！总耗时: {total_time:.2f}秒，最佳验证损失: {best_val_loss:.4f}")
+    return model
+
+def save_model(model, filename='tetris_model.pth'):
+    """保存训练好的模型"""
+    torch.save(model.state_dict(), filename)
+    print(f"模型已保存到 {filename}")
+
+class TetrisAI:
+    """使用训练好的模型来玩Tetris"""
+    def __init__(self, model_path='tetris_model.pth'):
+        self.model = TetrisNet()
+        try:
+            self.model.load_state_dict(torch.load(model_path))
+            self.model.eval()  # 设置为评估模式
+            print(f"成功加载模型: {model_path}")
+        except Exception as e:
+            print(f"加载模型失败: {e}")
+            raise
+    
+    def predict_move(self, board, piece):
+        """预测最佳移动"""
+        # 将游戏状态转换为模型输入格式
+        state_vector = self.create_state_vector(board, piece)
+        # 先转换为numpy数组再转换为张量，避免性能警告
+        state_tensor = torch.FloatTensor(np.array([state_vector], dtype=np.float32))
+        
+        # 使用模型预测
+        with torch.no_grad():
+            output = self.model(state_tensor)
+        
+        # 输出为 [x位置, 旋转] 
+        x = int(round(output[0][0].item()))
+        rotation = int(round(output[0][1].item())) % 4  # 确保在0-3范围内
+        
+        # 计算最终位置
+        rotated_piece = deepcopy(piece)
+        for _ in range(rotation):
+            rotated_piece = rotate(rotated_piece)
+            
+        # 确保x在合理范围内
+        x = max(-2, min(x, len(board[0]) - len(rotated_piece[0]) + 2))
+        
+        # 计算y (下落位置)
+        y = 0
+        while y < len(board) and check(board, rotated_piece, [x, y+1]):
+            y += 1
+        
+        return {'x': x, 'y': y, 'rotation': rotation}
+    
+    def create_state_vector(self, board, piece):
+        """创建游戏状态向量，与训练时相同格式"""
+        # 展平游戏板 (20x10 = 200)
+        board_vector = np.array(board, dtype=np.float32).flatten()
+        
+        # 将piece转换为4x4矩阵
+        piece_matrix = np.zeros((4, 4), dtype=np.float32)
+        piece = np.array(piece)
+        h, w = piece.shape
+        # 将piece放在4x4矩阵的中心
+        start_h = (4 - h) // 2
+        start_w = (4 - w) // 2
+        piece_matrix[start_h:start_h+h, start_w:start_w+w] = piece
+        piece_vector = piece_matrix.flatten()  # 4x4 = 16
+        
+        # 合并状态 (200 + 16 = 216)
+        return np.concatenate([board_vector, piece_vector])
+
+def main():
+    try:
+        print("=" * 50)
+        print("俄罗斯方块监督学习系统 v2.0")
+        print("=" * 50)
+        
+        # 选择模式
+        print("请选择模式:")
+        print("1. 收集训练数据并训练模型")
+        print("2. 加载已有数据并训练模型")
+        print("3. 测试训练好的模型")
+        print("4. 数据分析与可视化")
+        print("5. 使用不同模型对比")
+        print("0. 退出")
+        mode = input("请输入选项 (0-5，默认为1): ") or "1"
+        if mode == "1":
+            # 收集数据并训练
+            print("\n=== 数据收集与模型训练 ===")
+            
+            print("请选择数据收集量:")
+            print("1. 快速测试 (5局游戏，每局50步)")
+            print("2. 标准训练 (20局游戏，每局100步)")
+            print("3. 大规模训练 (50局游戏，每局200步)")
+            
+            data_option = input("请选择数据量 (1/2/3，默认为2): ") or "2"
+            
+            if data_option == "1":
+                collector = TetrisDataCollector(num_games=5, max_moves=50, timeout=30)
+                epochs = 20
+            elif data_option == "3":
+                collector = TetrisDataCollector(num_games=50, max_moves=200, timeout=120)
+                epochs = 100
+            else:  # 选项2或默认
+                collector = TetrisDataCollector(num_games=20, max_moves=100, timeout=60)
+                epochs = 50
+                
+            # 收集数据
+            game_states, moves = collector.collect_data()
+            
+            if len(game_states) > 0:
+                print("\n开始训练模型...")
+                
+                # 检查是否存在之前的数据，如果有则合并
+                try:
+                    prev_states, prev_moves = TetrisDataset.load_from_file()
+                    if prev_states is not None and len(prev_states) > 0:
+                        print(f"发现已有训练数据 ({len(prev_states)} 个样本)，是否与新数据合并？")
+                        merge = input("是否合并数据? (y/n, 默认y): ").lower() != 'n'
+                        
+                        if merge:
+                            game_states = np.concatenate([prev_states, game_states])
+                            moves = np.concatenate([prev_moves, moves])
+                            print(f"数据已合并，总共 {len(game_states)} 个样本")
+                            # 保存合并后的数据
+                            TetrisDataset.save_to_file(game_states, moves)
+                except Exception as e:
+                    print(f"尝试加载已有数据失败: {e}")
+                    
+                # 训练模型
+                model = train_network(game_states, moves, num_epochs=epochs, batch_size=64)
+                save_model(model)
+            else:
+                print("错误: 未收集到训练数据，无法训练模型")
+        elif mode == "2":
+            # 从文件加载数据并训练
+            print("\n=== 从文件加载数据并训练 ===")
+            game_states, moves = TetrisDataset.load_from_file()
+            
+            if game_states is not None and moves is not None:
+                print(f"成功加载训练数据: {len(game_states)} 个样本")
+                
+                # 高级训练选项
+                print("\n训练选项:")
+                print("1. 快速训练 (20轮，学习率0.001)")
+                print("2. 标准训练 (50轮，学习率0.001)")
+                print("3. 深度训练 (100轮，学习率0.0005，早停patience=20)")
+                print("4. 自定义训练参数")
+                
+                train_option = input("请选择训练模式 (1/2/3/4，默认为2): ") or "2"
+                
+                if train_option == "1":
+                    model = train_network(game_states, moves, num_epochs=20, batch_size=64, learning_rate=0.001)
+                elif train_option == "3":
+                    model = train_network(game_states, moves, num_epochs=100, batch_size=128, learning_rate=0.0005, patience=20)
+                elif train_option == "4":
+                    epochs = int(input("请输入训练轮数 (默认50): ") or "50")
+                    batch_size = int(input("请输入批次大小 (默认64): ") or "64")
+                    lr = float(input("请输入学习率 (默认0.001): ") or "0.001")
+                    patience = int(input("请输入早停耐心值 (默认15): ") or "15")
+                    model = train_network(game_states, moves, num_epochs=epochs, batch_size=batch_size, 
+                                         learning_rate=lr, patience=patience)
+                else:  # 选项2或默认
+                    model = train_network(game_states, moves, num_epochs=50, batch_size=64)
+                
+                # 保存最终模型
+                model_name = input("请输入模型保存名称 (默认为tetris_model.pth): ") or "tetris_model.pth"
+                save_model(model, model_name)
+            else:
+                print("错误: 加载训练数据失败")
+        elif mode == "3":
+            # 测试训练好的模型
+            print("\n=== 测试训练好的模型 ===")
+            try:
+                # 列出可用模型
+                import os
+                available_models = [f for f in os.listdir('.') if f.endswith('.pth')]
+                if not available_models:
+                    print("错误：找不到任何模型文件")
+                    return
+                
+                print("可用模型文件:")
+                for i, model_file in enumerate(available_models):
+                    print(f"{i+1}. {model_file}")
+                
+                model_idx = input(f"请选择要测试的模型 (1-{len(available_models)}，默认为1): ") or "1"
+                try:
+                    model_idx = int(model_idx) - 1
+                    if model_idx < 0 or model_idx >= len(available_models):
+                        model_idx = 0
+                except ValueError:
+                    model_idx = 0
+                
+                model_path = available_models[model_idx]
+                ai = TetrisAI(model_path)
+                print(f"成功加载AI模型: {model_path}")
+                
+                # 测试参数
+                test_games = int(input("请输入要测试的游戏局数 (默认5): ") or "5")
+                max_steps = int(input("请输入每局游戏的最大步数 (默认200): ") or "200")
+                show_board = input("是否显示游戏板状态? (y/n，默认n): ").lower() == 'y'
+                
+                print("\n开始模拟测试...")
+                
+                # 运行多局游戏来测试
+                total_score = 0
+                total_moves = 0
+                total_lines_cleared = 0
+                
+                for game in range(test_games):
+                    print(f"\n--- 测试游戏 {game+1}/{test_games} ---")
+                    board = [[0 for _ in range(10)] for _ in range(20)]
+                    score = 0
+                    moves = 0
+                    lines_cleared = 0
+                    
+                    while moves < max_steps:
+                        # 随机选择一个方块
+                        piece = random.choice(shapes)
+                        move = ai.predict_move(board, piece)
+                        
+                        if move is None:
+                            print(f"游戏 {game+1} AI无法找到有效移动")
+                            break
+                            
+                        # 执行移动
+                        rotated_piece = deepcopy(piece)
+                        for _ in range(move['rotation']):
+                            rotated_piece = rotate(rotated_piece)
+                            
+                        # 更新游戏板
+                        if not check(board, rotated_piece, [move['x'], move['y']]):
+                            print(f"游戏 {game+1} 移动无效: x={move['x']}, y={move['y']}, 旋转={move['rotation']}")
+                            break
+                            
+                        join_matrix(board, rotated_piece, [move['x'], move['y']])
+                        board, cleared = clear_rows(board)
+                        score += cleared * 100
+                        lines_cleared += cleared
+                        moves += 1
+                        
+                        # 显示游戏板
+                        if show_board and moves % 20 == 0:
+                            print(f"\n游戏板状态 (步数={moves}):")
+                            for row in board:
+                                print(''.join(['□' if cell == 0 else '■' for cell in row]))
+                        
+                        # 打印进度
+                        if moves % 50 == 0:
+                            print(f"游戏 {game+1}: 已完成 {moves} 步, 当前分数: {score}, 消除行数: {lines_cleared}")
+                    
+                    # 游戏结束统计
+                    print(f"游戏 {game+1} 结束: 总步数={moves}, 分数={score}, 消除行数={lines_cleared}")
+                    total_score += score
+                    total_moves += moves
+                    total_lines_cleared += lines_cleared
+                
+                # 总体统计
+                avg_score = total_score / test_games
+                avg_moves = total_moves / test_games
+                avg_lines = total_lines_cleared / test_games
+                
+                print(f"\n=== 测试结果汇总 ===")
+                print(f"测试局数: {test_games}")
+                print(f"平均步数: {avg_moves:.1f}")
+                print(f"平均分数: {avg_score:.1f}")
+                print(f"平均消除行数: {avg_lines:.1f}")
+                print(f"平均每步分数: {total_score/total_moves if total_moves > 0 else 0:.2f}")
+                
+            except Exception as e:
+                print(f"测试模型时出错: {e}")
+                import traceback
+                traceback.print_exc()
+        elif mode == "4":
+            # 数据分析与可视化
+            print("\n=== 数据分析与可视化 ===")
+            try:
+                import matplotlib.pyplot as plt
+                
+                # 加载训练数据
+                game_states, moves = TetrisDataset.load_from_file()
+                
+                if game_states is not None and len(game_states) > 0:
+                    print(f"加载了 {len(game_states)} 个训练样本进行分析")
+                    
+                    # 分析移动分布
+                    x_positions = moves[:, 0]
+                    rotations = moves[:, 1]
+                    
+                    # 创建图表
+                    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+                    
+                    # X位置分布
+                    ax1.hist(x_positions, bins=range(-3, 11), alpha=0.7)
+                    ax1.set_title('X位置分布')
+                    ax1.set_xlabel('X位置')
+                    ax1.set_ylabel('频率')
+                    ax1.grid(True, alpha=0.3)
+                    
+                    # 旋转分布
+                    rotation_counts = np.bincount(rotations.astype(int))
+                    ax2.bar(range(len(rotation_counts)), rotation_counts, alpha=0.7)
+                    ax2.set_title('旋转分布')
+                    ax2.set_xlabel('旋转角度')
+                    ax2.set_ylabel('频率')
+                    ax2.set_xticks(range(len(rotation_counts)))
+                    ax2.grid(True, alpha=0.3)
+                    
+                    plt.tight_layout()
+                    
+                    # 保存图表
+                    output_file = 'tetris_data_analysis.png'
+                    plt.savefig(output_file)
+                    print(f"分析图表已保存到 {output_file}")
+                    
+                    # 显示图表
+                    try:
+                        plt.show()
+                    except:
+                        print("无法显示图表窗口，但图表已保存到文件")
+                    
+                else:
+                    print("错误: 未找到训练数据或数据为空")
+            except ImportError:
+                print("错误: 需要安装matplotlib库才能进行数据可视化")
+                print("请运行: pip install matplotlib")
+            except Exception as e:
+                print(f"数据分析过程中出错: {e}")
+                import traceback
+                traceback.print_exc()
+                
+        elif mode == "5":
+            # 使用不同模型对比
+            print("\n=== 模型性能对比 ===")
+            try:
+                # 列出所有模型文件
+                import os
+                model_files = [f for f in os.listdir('.') if f.endswith('.pth')]
+                
+                if len(model_files) < 2:
+                    print("错误: 需要至少两个不同的模型文件来进行对比")
+                    return
+                    
+                print("可用模型:")
+                for i, model_file in enumerate(model_files):
+                    print(f"{i+1}. {model_file}")
+                
+                # 选择要比较的模型
+                model1_idx = int(input(f"请选择第一个模型 (1-{len(model_files)}): ")) - 1
+                model2_idx = int(input(f"请选择第二个模型 (1-{len(model_files)}): ")) - 1
+                
+                if model1_idx < 0 or model1_idx >= len(model_files) or \
+                   model2_idx < 0 or model2_idx >= len(model_files):
+                    print("错误: 无效的模型选择")
+                    return
+                    
+                model1_path = model_files[model1_idx]
+                model2_path = model_files[model2_idx]
+                
+                print(f"\n比较模型: {model1_path} vs {model2_path}")
+                print("每个模型将测试5局游戏，每局最多100步")
+                
+                # 测试第一个模型
+                print(f"\n测试模型1: {model1_path}")
+                ai1 = TetrisAI(model1_path)
+                model1_scores = []
+                model1_moves = []
+                model1_lines = []
+                
+                for game in range(5):
+                    board = [[0 for _ in range(10)] for _ in range(20)]
+                    score = 0
+                    moves = 0
+                    lines_cleared = 0
+                    
+                    while moves < 100:
+                        piece = random.choice(shapes)
+                        move = ai1.predict_move(board, piece)
+                        
+                        # 检查当前移动是否有效
+                        if move is None:
+                            break
+                            
+                        # 根据旋转计算旋转后的方块
+                        temp_piece = deepcopy(piece)
+                        if move['rotation'] > 0:
+                            for _ in range(move['rotation']):
+                                temp_piece = rotate(temp_piece)
+                                
+                        # 检查是否可以放置
+                        if not check(board, temp_piece, [move['x'], move['y']]):
+                            break
+                            
+                        rotated_piece = deepcopy(piece)
+                        for _ in range(move['rotation']):
+                            rotated_piece = rotate(rotated_piece)
+                            
+                        join_matrix(board, rotated_piece, [move['x'], move['y']])
+                        board, cleared = clear_rows(board)
+                        score += cleared * 100
+                        lines_cleared += cleared
+                        moves += 1
+                    
+                    model1_scores.append(score)
+                    model1_moves.append(moves)
+                    model1_lines.append(lines_cleared)
+                    print(f"游戏 {game+1}: {moves}步, {score}分, {lines_cleared}行")
+                
+                # 测试第二个模型
+                print(f"\n测试模型2: {model2_path}")
+                ai2 = TetrisAI(model2_path)
+                model2_scores = []
+                model2_moves = []
+                model2_lines = []
+                
+                for game in range(5):
+                    board = [[0 for _ in range(10)] for _ in range(20)]
+                    score = 0
+                    moves = 0
+                    lines_cleared = 0
+                    
+                    while moves < 100:
+                        piece = random.choice(shapes)
+                        move = ai2.predict_move(board, piece)
+                        
+                        # 检查当前移动是否有效
+                        if move is None:
+                            break
+                            
+                        # 根据旋转计算旋转后的方块
+                        temp_piece = deepcopy(piece)
+                        if move['rotation'] > 0:
+                            for _ in range(move['rotation']):
+                                temp_piece = rotate(temp_piece)
+                                
+                        # 检查是否可以放置
+                        if not check(board, temp_piece, [move['x'], move['y']]):
+                            break
+                            
+                        rotated_piece = deepcopy(piece)
+                        for _ in range(move['rotation']):
+                            rotated_piece = rotate(rotated_piece)
+                            
+                        join_matrix(board, rotated_piece, [move['x'], move['y']])
+                        board, cleared = clear_rows(board)
+                        score += cleared * 100
+                        lines_cleared += cleared
+                        moves += 1
+                    
+                    model2_scores.append(score)
+                    model2_moves.append(moves)
+                    model2_lines.append(lines_cleared)
+                    print(f"游戏 {game+1}: {moves}步, {score}分, {lines_cleared}行")
+                
+                # 比较结果
+                print("\n=== 对比结果 ===")
+                print(f"模型1 ({model1_path}) 平均: {sum(model1_moves)/5:.1f}步, {sum(model1_scores)/5:.1f}分, {sum(model1_lines)/5:.1f}行")
+                print(f"模型2 ({model2_path}) 平均: {sum(model2_moves)/5:.1f}步, {sum(model2_scores)/5:.1f}分, {sum(model2_lines)/5:.1f}行")
+                
+                # 确定胜者
+                if sum(model1_scores) > sum(model2_scores):
+                    print(f"\n结论: 模型1 ({model1_path}) 表现更好")
+                elif sum(model2_scores) > sum(model1_scores):
+                    print(f"\n结论: 模型2 ({model2_path}) 表现更好")
+                else:
+                    print("\n结论: 两个模型表现相似")
+                
+            except Exception as e:
+                print(f"模型比较时出错: {e}")
+                import traceback
+                traceback.print_exc()
+                
+        elif mode == "0":
+            print("退出程序")
+            return
+            
+        else:
+            print("无效的选项")
+            
+    except KeyboardInterrupt:
+        print("\n程序被用户中断")
+    except Exception as e:
+        print(f"发生错误: {e}")
+        import traceback
+        print("\n详细错误信息:")
+        traceback.print_exc()
+    finally:
+        print("\n=== 程序执行结束 ===")
+
+if __name__ == "__main__":
+    main()
