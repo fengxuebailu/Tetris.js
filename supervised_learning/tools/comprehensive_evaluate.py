@@ -5,21 +5,30 @@
 用于综合评估和比较各种模型的有效性、持久性和性能
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import random
-import time
-from copy import deepcopy
 import os
-import torch
 import sys
-import pandas as pd
+import time
+import random
+import json
 import argparse
-from Tetris import shapes, rotate, check, join_matrix, clear_rows
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from datetime import datetime
+from copy import deepcopy
 
-# 确保可以导入必要的模块
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 导入Matplotlib配置
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tools.matplotlibrc import *
+
+# 设置Python路径以导入模块
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(PROJECT_ROOT)
+sys.path.append(os.path.dirname(PROJECT_ROOT))
+
+from supervised_learning.core.tetris_supervised_fixed import TetrisAI, TetrisDataCollector
+from Tetris import shapes, check, join_matrix, clear_rows, rotate
 
 class ComprehensiveEvaluator:
     """全面的模型评估器"""

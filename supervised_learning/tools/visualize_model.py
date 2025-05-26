@@ -5,14 +5,19 @@
 用于可视化和分析模型内部结构、权重和激活
 """
 
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+# 导入Matplotlib配置
 import os
 import sys
-from tetris_supervised_fixed import TetrisNet, TetrisAI
-from Tetris import shapes
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+from tools.matplotlibrc import *
+
+import torch
+import numpy as np
+import seaborn as sns
+from core.tetris_supervised_fixed import TetrisNet, TetrisAI
+from Tetris import shapes, rotate, check, join_matrix, clear_rows
 
 def visualize_model_structure(model_path):
     """可视化模型结构"""

@@ -439,8 +439,7 @@ def save_model(model, filename='tetris_model.pth'):
     print(f"模型已保存到 {filename}")
 
 class TetrisAI:
-    """使用训练好的模型来玩Tetris"""
-    def __init__(self, model_path='tetris_model.pth'):
+    """使用训练好的模型来玩Tetris"""    def __init__(self, model_path='tetris_model.pth'):
         self.model = TetrisNet()
         try:
             self.model.load_state_dict(torch.load(model_path))

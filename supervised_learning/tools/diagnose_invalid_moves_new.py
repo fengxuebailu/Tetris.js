@@ -5,26 +5,34 @@
 用于分析和诊断神经网络预测的无效移动问题
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-import random
-import time
-from copy import deepcopy
 import os
-import torch
 import sys
+import time
+import random
+import numpy as np
+from copy import deepcopy
+import matplotlib.pyplot as plt
 
-# 添加core目录到Python路径
+# 导入Matplotlib配置
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+# 设置Python路径以导入模块
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(PROJECT_ROOT, 'core'))
+sys.path.append(PROJECT_ROOT)
+sys.path.append(os.path.dirname(PROJECT_ROOT))
 
-# 导入所需模块
-from Tetris import shapes, rotate, check, join_matrix, clear_rows
-from tetris_supervised_fixed import TetrisAI, TetrisDataCollector
-from tetris_supervised import TetrisAI as OldTetrisAI
+from supervised_learning.core.tetris_supervised_fixed import TetrisAI, TetrisDataCollector
+from supervised_learning.core.tetris_supervised import TetrisAI as OldTetrisAI
+from Tetris import shapes, rotate, check, join_matrix
 
-# 历史记录保存路径
+# 导入matplotlib全局配置
+from tools.matplotlibrc import *
+
+# 诊断输出目录
 DIAGNOSTICS_DIR = os.path.join(PROJECT_ROOT, "move_diagnostics")
+if not os.path.exists(DIAGNOSTICS_DIR):
+    os.makedirs(DIAGNOSTICS_DIR)
 
 def setup_environment():
     """初始化诊断环境"""

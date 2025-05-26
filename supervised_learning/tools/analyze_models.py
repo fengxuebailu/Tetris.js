@@ -5,13 +5,26 @@
 用于对不同模型进行详细的性能分析
 """
 
+import os
+import sys
+import time
+from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
-from collections import defaultdict
-import os
-import time
-import sys
-import torch
+import seaborn as sns
+from datetime import datetime
+
+# 导入Matplotlib配置
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+# 设置Python路径以导入模块
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(PROJECT_ROOT)
+sys.path.append(os.path.dirname(PROJECT_ROOT))
+
+from supervised_learning.core.tetris_supervised_fixed import TetrisAI
+from Tetris import shapes, check, join_matrix, clear_rows, rotate
 from test_models import test_model, compare_models_performance
 
 def analyze_models(model_paths, num_games=10, max_steps=500, detailed=True):

@@ -5,15 +5,29 @@
 用于全面评估模型性能并对比新旧模型
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import random
-import time
-from copy import deepcopy
 import os
-import torch
-from Tetris import shapes, rotate, check, join_matrix, clear_rows, get_height, count_holes, get_bumpiness
+import sys
+import time
+import random
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from datetime import datetime
+from copy import deepcopy
+import traceback
+
+# 导入Matplotlib配置
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+# 设置Python路径以导入模块
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(PROJECT_ROOT)
+sys.path.append(os.path.dirname(PROJECT_ROOT))
+
+from supervised_learning.core.tetris_supervised_fixed import TetrisAI
+from Tetris import shapes, check, join_matrix, clear_rows, rotate
 from test_models import test_model
 
 class EnhancedModelEvaluator:

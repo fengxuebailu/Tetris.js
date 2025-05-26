@@ -12,6 +12,11 @@ import os
 import matplotlib.pyplot as plt
 from tetris_supervised_fixed import TetrisNet, TetrisDataset, train_network, save_model
 
+# 导入Matplotlib配置
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tools.matplotlibrc import *
+
 def train_full_model(epochs=50, batch_size=64):
     """使用完整数据集训练新架构模型"""
     print("=== 使用完整数据集训练新架构模型 ===")
