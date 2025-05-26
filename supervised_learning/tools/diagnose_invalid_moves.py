@@ -13,10 +13,13 @@ from copy import deepcopy
 import os
 import torch
 import sys
+
+# 添加core目录到Python路径
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'core'))
 from Tetris import shapes, rotate, check, join_matrix, clear_rows
 
 # 历史记录保存路径
-DIAGNOSTICS_DIR = "move_diagnostics"
+DIAGNOSTICS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "move_diagnostics")
 
 def setup_environment():
     """初始化诊断环境"""

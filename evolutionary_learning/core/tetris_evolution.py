@@ -1,8 +1,27 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+俄罗斯方块进化算法系统 - 核心算法
+使用遗传算法优化俄罗斯方块AI的参数
+"""
+
 import random
 import numpy as np
 from copy import deepcopy
 import json
 import time
+import os
+import sys
+import argparse
+
+# 获取项目根目录的绝对路径
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CORE_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+# 添加监督学习core目录到Python路径以导入Tetris基础类
+SUPERVISED_CORE = os.path.join(os.path.dirname(PROJECT_ROOT), 'core')
+sys.path.insert(0, SUPERVISED_CORE)
+
 from Tetris import (shapes, rotate, check, join_matrix, clear_rows, 
                    get_height, count_holes, get_bumpiness)
 

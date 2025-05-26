@@ -1,110 +1,64 @@
-# 俄罗斯方块监督学习系统
+# 俄罗斯方块AI系统
 
-基于神经网络的俄罗斯方块AI训练和评估系统。
+本项目包含两个独立的AI系统：监督学习系统和进化算法系统。两个系统共用基础的游戏逻辑代码。
 
-## 文件说明
+## 项目结构
 
-### 核心文件
-- `Tetris.py` - 俄罗斯方块游戏核心逻辑
-- `tetris_supervised.py` - 原始监督学习系统（带有语法错误的版本）
-- `tetris_supervised_fixed.py` - 修复版的监督学习系统
-- `tetris_evolution.py` - 使用进化算法优化权重的系统
+```
+Tetris.js/
+├── supervised_learning/    # 监督学习系统
+│   ├── core/             # 核心实现
+│   ├── models/           # 训练好的模型(.pth格式)
+│   ├── tools/           # 工具脚本
+│   ├── data/            # 训练数据
+│   └── scripts/         # 启动脚本
+│
+├── evolutionary_learning/ # 进化算法系统
+│   ├── core/            # 核心实现
+│   ├── models/          # 训练好的模型(.json格式)
+│   ├── configs/         # 配置文件
+│   └── scripts/         # 启动脚本
+│
+└── Tetris.py           # 基础游戏逻辑
+```
 
-### 训练和测试文件
-- `train_new_model.py` - 简单的新模型训练脚本
-- `train_full_model.py` - 全面的模型训练脚本，支持完整数据集
-- `test_models.py` - 基本的模型测试脚本
+## 监督学习系统
 
-### 分析和可视化文件
-- `analyze_models.py` - 深度模型性能分析脚本
-- `visualize_model.py` - 神经网络模型可视化脚本
-- `model_compatibility.py` - 处理不同模型架构兼容性的工具
+监督学习系统通过观察人类玩家的游戏数据来训练AI模型。使用深度神经网络实现。
 
-### 主流程
-- `run_full_process.py` - 完整流程执行脚本，包括训练、测试和分析
+### 使用方法
 
-## 使用方法
-
-### 训练新模型
 ```bash
-python train_full_model.py
+cd supervised_learning/scripts
+python start.py --train    # 训练新模型
+python start.py --test     # 测试模型
+python start.py --diagnose # 诊断模型
+python start.py --evaluate # 评估所有模型
 ```
-这将使用完整的训练数据集训练新的增强架构模型。
 
-### 测试模型
+## 进化算法系统
+
+进化算法系统使用遗传算法来优化AI的决策参数。通过不断进化和选择来找到最优的游戏策略。
+
+### 使用方法
+
 ```bash
-python test_models.py tetris_model.pth tetris_model_new_full.pth
-```
-这将测试并比较两个模型的性能。
-
-### 分析模型
-```bash
-python analyze_models.py tetris_model.pth tetris_model_new_full.pth
-```
-这将对模型进行更深入的分析，包括生成性能分布和游戏终止原因等可视化结果。
-
-### 可视化模型
-```bash
-python visualize_model.py tetris_model_new_full.pth
-```
-这将生成模型权重、激活值和决策热图等可视化图表。
-
-### 执行完整流程
-```bash
-python run_full_process.py
-```
-这将执行完整的训练、测试和分析流程。可以使用以下参数：
-- `--skip-train`: 跳过训练阶段
-- `--skip-test`: 跳过测试阶段
-- `--skip-analysis`: 跳过分析阶段
-- `--epochs 100`: 设置训练轮数（默认为50）
-- `--games 50`: 设置测试游戏数量（默认为20）
-
-## 神经网络架构
-
-新的TetrisNet架构采用分离式设计，单独处理棋盘和方块特征：
-
-```python
-class TetrisNet(nn.Module):
-    def __init__(self):
-        super(TetrisNet, self).__init__()
-        
-        # 棋盘特征提取网络
-        self.board_features = nn.Sequential(
-            nn.Linear(200, 256),
-            nn.BatchNorm1d(256),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.2),
-            nn.Linear(256, 128)
-        )
-        
-        # 方块特征提取网络
-        self.piece_features = nn.Sequential(
-            nn.Linear(16, 32),
-            nn.BatchNorm1d(32),
-            nn.LeakyReLU(0.1),
-            nn.Linear(32, 16)
-        )
-        
-        # 组合网络 (用于最终决策)
-        self.combined_network = nn.Sequential(
-            nn.Linear(144, 128),  # 128 + 16 = 144
-            nn.BatchNorm1d(128),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.2),
-            nn.Linear(128, 64),
-            nn.BatchNorm1d(64),
-            nn.LeakyReLU(0.1),
-            nn.Linear(64, 32),
-            nn.BatchNorm1d(32),
-            nn.LeakyReLU(0.1),
-            nn.Linear(32, 2)  # 输出: x位置, 旋转角度
-        )
+cd evolutionary_learning/scripts
+python start.py --train    # 训练新模型
+python start.py --test     # 测试模型
+python start.py --evaluate # 评估所有模型
 ```
 
-## 运行环境要求
-- Python 3.6+
-- PyTorch
-- NumPy
-- Matplotlib
-- Seaborn (用于可视化)
+## 区别
+
+1. 监督学习系统:
+   - 使用神经网络模型
+   - 需要人类玩家的训练数据
+   - 模型文件格式为.pth
+   - 可以学习复杂的策略模式
+
+2. 进化算法系统:
+   - 使用遗传算法优化权重参数
+   - 不需要训练数据,通过自我对弈进化
+   - 模型文件格式为.json
+   - 策略相对简单但稳定
