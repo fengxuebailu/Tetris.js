@@ -1,0 +1,21 @@
+2025-05-27 17:35:15,278 - training_1748338515 - INFO - ==================================================
+2025-05-27 17:35:15,278 - training_1748338515 - INFO - === Starting new training session ===
+2025-05-27 17:35:15,279 - training_1748338515 - INFO - ==================================================
+2025-05-27 17:35:15,279 - training_1748338515 - INFO - 
+Step 1: Collecting training data...
+2025-05-27 17:35:19,914 - training_1748338515 - INFO - Merging 2845 existing samples...
+2025-05-27 17:35:19,931 - training_1748338515 - INFO - Saved 5690 training samples
+2025-05-27 17:35:19,933 - training_1748338515 - INFO - 
+Step 2: Preparing dataset...
+2025-05-27 17:35:19,938 - training_1748338515 - INFO - 数据集大小: 5690
+2025-05-27 17:35:19,938 - training_1748338515 - INFO - 训练集: 4552 样本
+2025-05-27 17:35:19,939 - training_1748338515 - INFO - 验证集: 1138 样本
+2025-05-27 17:35:19,939 - training_1748338515 - INFO - 
+Step 3: Training models...
+2025-05-27 17:35:19,939 - training_1748338515 - INFO - 
+Training standard architecture...
+2025-05-27 17:35:24,391 - training_1748338515 - ERROR - Training for standard failed: __init__() got an unexpected keyword argument 'verbose'
+2025-05-27 17:35:25,470 - training_1748338515 - INFO - 保存训练历史图表到 training_pipeline\training_history.png
+2025-05-27 17:35:25,471 - training_1748338515 - INFO - 
+Training pipeline completed!
+2025-05-27 17:35:25,471 - training_1748338515 - INFO - Successfully trained 0 models:

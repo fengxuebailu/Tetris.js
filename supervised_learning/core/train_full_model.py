@@ -62,12 +62,13 @@ def train_full_model(epochs=50, batch_size=64):
         
         print(f"\n训练完成!")
         print(f"总训练时间: {int(hours)}小时 {int(minutes)}分钟 {seconds:.2f}秒")
-        
-        # 保存最终模型
-        final_model_path = "tetris_model_new_full.pth"
+          # 保存最终模型
+        models_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
+        if not os.path.exists(models_dir):
+            os.makedirs(models_dir)
+        final_model_path = os.path.join(models_dir, "tetris_model_new_full.pth")
         save_model(model, final_model_path)
         print(f"最终模型已保存到: {final_model_path}")
-        
         return model
                             
     except Exception as e:
@@ -90,19 +91,19 @@ def plot_training_curves():
         
         # 训练和验证损失
         plt.subplot(1, 2, 1)
-        plt.plot(epochs, history["train_loss"], "b-", label="训练损失")
-        plt.plot(epochs, history["val_loss"], "r-", label="验证损失")
-        plt.title("训练和验证损失")
-        plt.xlabel("轮数")
-        plt.ylabel("损失")
+        plt.plot(epochs, history["train_loss"], "b-", label="Training Loss")
+        plt.plot(epochs, history["val_loss"], "r-", label="Validation Loss")
+        plt.title("Training and Validation Loss")
+        plt.xlabel("Epochs")
+        plt.ylabel("Loss")
         plt.legend()
         
         # 学习率变化
         plt.subplot(1, 2, 2)
         plt.plot(epochs, history["learning_rates"], "g-")
-        plt.title("学习率变化")
-        plt.xlabel("轮数")
-        plt.ylabel("学习率")
+        plt.title("Learning Rate Schedule")
+        plt.xlabel("Epochs")
+        plt.ylabel("Learning Rate")
         plt.yscale("log")
         
         plt.tight_layout()

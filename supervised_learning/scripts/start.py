@@ -51,13 +51,39 @@ def get_model_selection(models: List[str]) -> Optional[str]:
         except ValueError:
             print("请输入有效的数字")
 
-def run_python_script(script_path: str, *args):
-    """安全地运行Python脚本"""
+def run_python_script(script_path: str, *args, timeout=300):
+    """安全地运行Python脚本，带有超时控制和实时输出"""
     try:
         cmd = [sys.executable, script_path] + list(args)
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"\n脚本执行错误: {e}")
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            bufsize=1
+        )
+        
+        print("\n开始执行...")
+        while True:
+            # 读取输出
+            output = process.stdout.readline()
+            if output == '' and process.poll() is not None:
+                break
+            if output:
+                print(output.strip())
+                
+        # 检查是否有错误
+        if process.returncode != 0:
+            error = process.stderr.read()
+            print(f"\n执行出错: {error}")
+            sys.exit(1)
+            
+    except subprocess.TimeoutExpired:
+        print(f"\n执行超时（{timeout}秒）")
+        process.kill()
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n执行出错: {e}")
         sys.exit(1)
 
 def main():
