@@ -91,19 +91,19 @@ def plot_training_curves():
         
         # 训练和验证损失
         plt.subplot(1, 2, 1)
-        plt.plot(epochs, history["train_loss"], "b-", label="Training Loss")
-        plt.plot(epochs, history["val_loss"], "r-", label="Validation Loss")
-        plt.title("Training and Validation Loss")
-        plt.xlabel("Epochs")
-        plt.ylabel("Loss")
+        plt.plot(epochs, history["train_loss"], "b-", label="训练损失")
+        plt.plot(epochs, history["val_loss"], "r-", label="验证损失")
+        plt.title("训练和验证损失")
+        plt.xlabel("轮数")
+        plt.ylabel("损失")
         plt.legend()
         
         # 学习率变化
         plt.subplot(1, 2, 2)
         plt.plot(epochs, history["learning_rates"], "g-")
-        plt.title("Learning Rate Schedule")
-        plt.xlabel("Epochs")
-        plt.ylabel("Learning Rate")
+        plt.title("学习率变化")
+        plt.xlabel("轮数")
+        plt.ylabel("学习率")
         plt.yscale("log")
         
         plt.tight_layout()

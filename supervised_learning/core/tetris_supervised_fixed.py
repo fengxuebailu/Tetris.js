@@ -18,6 +18,7 @@ import traceback
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F  # 新添加的导入
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
@@ -36,6 +37,7 @@ def print_board(board_state):
         print("|" + "|".join(["X" if cell else " " for cell in row]) + "|")
     print("-" * (len(board_state[0]) * 2 + 1))
 
+# 封装和处理训练数据
 class TetrisDataset(Dataset):
     """用于存储和加载俄罗斯方块游戏状态和对应的最佳移动"""
     def __init__(self, game_states, moves):
@@ -68,34 +70,64 @@ class TetrisDataset(Dataset):
             data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "training_data")
             file_path = os.path.join(data_dir, filename)
             data = np.load(file_path)
-            return data['states'], data['moves']
+            states_data = data['states']
+            moves_data = data['moves']
+            
+            # Safely get lengths
+            states_len = len(states_data) if hasattr(states_data, '__len__') else 0
+            moves_len = len(moves_data) if hasattr(moves_data, '__len__') else 0
+            
+            print(f"加载数据: {states_len} 个状态, {moves_len} 个移动")
+            # Ensure that if one is None or empty, both are returned as such or handled appropriately
+            if states_len == 0 or moves_len == 0 or states_len != moves_len:
+                print("警告: 加载的数据无效或不完整。")
+                return None, None
+            return states_data, moves_data
+        except FileNotFoundError:
+            print(f"错误: 训练数据文件 {file_path} 未找到。")
+            return None, None
         except Exception as e:
             print(f"加载训练数据出错: {e}")
             return None, None
 
+# 神经网络的结构
 class TetrisNet(nn.Module):
     def __init__(self):
         super(TetrisNet, self).__init__()
-        # 输入特征: 游戏板状态(200)和当前方块(16)
+        # 输入特征: 游戏板状态(200) + 高度(1) + 空洞(1) + 凹凸度(1) + 当前方块(16) = 219
         
-        # 更复杂的网络结构，包含更多层和dropout防止过拟合
-        self.board_features = nn.Sequential(
-            nn.Linear(200, 256),
-            nn.BatchNorm1d(256),
+        # 使用CNN处理游戏板状态
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.2),
-            nn.Linear(256, 128)
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.1),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.1),
+            nn.AdaptiveAvgPool2d((1, 1))  # 输出大小为 64x1x1
         )
         
+        # 处理额外特征
+        self.extra_features = nn.Sequential(
+            nn.Linear(3, 32),  # 高度、空洞、凹凸度
+            nn.BatchNorm1d(32),
+            nn.LeakyReLU(0.1)
+        )
+        
+        # 处理当前方块
         self.piece_features = nn.Sequential(
             nn.Linear(16, 32),
             nn.BatchNorm1d(32),
             nn.LeakyReLU(0.1),
-            nn.Linear(32, 16)
+            nn.Linear(32, 32)
         )
         
-        self.combined_network = nn.Sequential(
-            nn.Linear(144, 128),  # 128 + 16 = 144
+        # 合并所有特征的决策网络
+        self.decision_network = nn.Sequential(
+            nn.Linear(64 + 32 + 32, 128),  # 64(conv) + 32(extra) + 32(piece) = 128
             nn.BatchNorm1d(128),
             nn.LeakyReLU(0.1),
             nn.Dropout(0.2),
@@ -107,19 +139,27 @@ class TetrisNet(nn.Module):
             nn.LeakyReLU(0.1),
             nn.Linear(32, 2)  # 输出: x位置, 旋转角度
         )
-
-    def forward(self, x):
-        # 分离游戏板和当前方块的特征
-        board_input = x[:, :200]  # 前200个特征是游戏板
-        piece_input = x[:, 200:]  # 后16个特征是方块
         
-        # 各自通过特征提取网络
-        board_feats = self.board_features(board_input)
+    def forward(self, x):
+        # 分离不同类型的输入
+        board_input = x[:, :200]  # 游戏板状态 (200)
+        extra_input = x[:, 200:203]  # 额外特征 (3)
+        piece_input = x[:, 203:]  # 方块特征 (16)
+        
+        # 处理游戏板 - 重塑为 2D 并添加通道维度
+        board_feats = board_input.view(-1, 1, 20, 10)  # (batch, channel, height, width)
+        board_feats = self.conv_layers(board_feats)  # CNN处理
+        board_feats = board_feats.view(-1, 64)  # 展平为 (batch, 64)
+        
+        # 处理额外特征和方块特征
+        extra_feats = self.extra_features(extra_input)
         piece_feats = self.piece_features(piece_input)
         
-        # 合并特征并进行最终预测
-        combined = torch.cat([board_feats, piece_feats], dim=1)
-        return self.combined_network(combined)
+        # 合并所有特征
+        combined = torch.cat([board_feats, extra_feats, piece_feats], dim=1)
+        
+        # 生成最终决策
+        return self.decision_network(combined)
 
 def load_weights():
     """加载或创建权重"""
@@ -259,6 +299,11 @@ class TetrisDataCollector:
         """创建游戏状态向量，确保方块向量大小一致"""
         # 展平游戏板 (20x10 = 200)
         board_vector = np.array(board, dtype=np.float32).flatten()
+
+        # 计算额外的启发式特征
+        height_val = np.array([get_height(board)], dtype=np.float32)
+        holes_val = np.array([count_holes(board)], dtype=np.float32)
+        bumpiness_val = np.array([get_bumpiness(board)], dtype=np.float32)
         
         # 将piece转换为4x4矩阵
         piece_matrix = np.zeros((4, 4), dtype=np.float32)
@@ -275,8 +320,8 @@ class TetrisDataCollector:
         piece_matrix[start_h:start_h+h, start_w:start_w+w] = piece_array
         piece_vector = piece_matrix.flatten()  # 4x4 = 16
         
-        # 合并状态 (200 + 16 = 216)
-        return np.concatenate([board_vector, piece_vector])
+        # 合并状态 (200 + 1 + 1 + 1 + 16 = 219)
+        return np.concatenate([board_vector, height_val, holes_val, bumpiness_val, piece_vector])
         
     def find_best_move_optimized(self, board, piece, weights):
         """优化版本的最佳移动查找算法，添加了超时检测和优化"""
@@ -323,16 +368,19 @@ class TetrisDataCollector:
             # height_rotated = len(current_piece_rotated) # unused
             
             # Dynamic x_range based on rotated piece
-            current_min_x = -width_rotated + 1 
-            current_max_x = len(board[0]) -1 # x is 0-indexed, so board_width - 1 is last valid column for a 1-width piece.
-                                            # piece is placed by its top-left corner.
-                                            # So, last valid x is board_width - piece_width
+            # width_rotated is len(current_piece_rotated[0])
+            # current_min_x = -width_rotated + 1 
 
-            for x_candidate in range(current_min_x, len(board[0]) - width_rotated + 1):
+            # Align with the x-range from play_with_evolved_weights.py for consistency
+            # The range in play_with_evolved_weights.py is:
+            # range(-len(current_rotated_piece[0]) + 1, len(board[0]) + 2)
+            # which translates to:
+            # range(-width_rotated + 1, len(board[0]) + 2)
+
+            for x_candidate in range(-width_rotated + 1, len(board[0]) + 2):
                 if time.time() - start_time > max_eval_time:
                     # print(f"评估超时，已评估 {evaluated} 个位置") # Can be noisy
                     if best_move is not None: return best_move # Return best found so far
-                    # If no move found yet, continue a bit more or fall through to second search
                 # print(f"Checking position x={x_candidate}, rotation={rotation_idx}")
                 if not check(board, current_piece_rotated, [x_candidate, 0]):
                     continue
@@ -392,8 +440,23 @@ class TetrisDataCollector:
     
 
 
-def train_network(game_states, moves, num_epochs=100, batch_size=64, learning_rate=0.001, patience=15):
-    """训练神经网络"""
+class WeightedTetrisLoss(nn.Module):
+    """加权俄罗斯方块损失函数"""
+    def __init__(self, x_weight=1.0, rotation_weight=2.0):
+        super().__init__()
+        self.x_weight = x_weight
+        self.rotation_weight = rotation_weight
+    
+    def forward(self, outputs, targets):
+        # 分别计算x坐标和旋转的损失
+        x_loss = F.mse_loss(outputs[:, 0], targets[:, 0])
+        rotation_loss = F.mse_loss(outputs[:, 1], targets[:, 1])
+        
+        # 加权组合
+        total_loss = self.x_weight * x_loss + self.rotation_weight * rotation_loss
+        return total_loss, x_loss, rotation_loss
+
+def train_network(game_states, moves, num_epochs=200, batch_size=32, learning_rate=0.001, patience=30):
     # 创建数据集
     dataset = TetrisDataset(game_states, moves)
     
@@ -407,10 +470,24 @@ def train_network(game_states, moves, num_epochs=100, batch_size=64, learning_ra
 
     # 初始化模型
     model = TetrisNet()
-    criterion = nn.MSELoss()
+    # 使用新的损失函数替代原来的 MSELoss
+    criterion = WeightedTetrisLoss(x_weight=1.0, rotation_weight=2.0)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-      # 学习率调度器 - 当验证损失不再下降时降低学习率
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+    # 学习率调度器 - 当验证损失不再下降时降低学习率
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode='min',
+        factor=0.5,      # 每次降低一半
+        patience=10      # 增加等待轮数
+    )
+
+    # 添加手动打印学习率变化的代码
+    last_lr = learning_rate
+    def log_lr_change(new_lr):
+        nonlocal last_lr
+        if new_lr != last_lr:
+            print(f'学习率从 {last_lr:.6f} 调整为 {new_lr:.6f}')
+            last_lr = new_lr
 
     print("开始训练模型...")
     print(f"训练数据: {train_size} 个样本, 验证数据: {val_size} 个样本")
@@ -434,49 +511,88 @@ def train_network(game_states, moves, num_epochs=100, batch_size=64, learning_ra
         # 训练阶段
         model.train()
         train_loss = 0
-        for batch_states, batch_moves in train_loader:
+        train_x_loss = 0
+        train_rot_loss = 0
+        printed_sample_this_epoch = False  # 在每个epoch开始时初始化标志
+
+        for batch_idx, (batch_states, batch_moves) in enumerate(train_loader):
             # 前向传播
             outputs = model(batch_states)
-            loss = criterion(outputs, batch_moves)
+            loss, x_loss, rot_loss = criterion(outputs, batch_moves)
+
+            # 打印批次损失 (每20个批次)
+            if batch_idx % 20 == 0:
+                print(f"    Epoch {epoch+1}, Batch {batch_idx+1}/{len(train_loader)}, Batch Loss: {loss.item():.4f}")
+
+            # 采样和打印数据 (每个epoch的第一个批次)
+            if not printed_sample_this_epoch and batch_states.size(0) > 0:
+                print(f"--- Sample Data - Epoch {epoch+1} ---")
+                sample_input_tensor = batch_states[0]
+                sample_target_tensor = batch_moves[0]
+                
+                # Detach and convert to numpy for printing
+                sample_input_np = sample_input_tensor.cpu().numpy()
+                sample_target_np = sample_target_tensor.cpu().numpy()
+                
+                with torch.no_grad(): # Ensure no gradients are computed for this sample forward pass
+                    model.eval() # Set model to eval mode for consistent output
+                    # Unsqueeze to add batch dimension for single sample prediction
+                    sample_output_tensor = model(sample_input_tensor.unsqueeze(0)).squeeze(0) 
+                    model.train() # Set model back to train mode
+                
+                sample_output_np = sample_output_tensor.cpu().numpy()
+                
+                print(f"  Sample Input (first 20 features): {sample_input_np[:20]}...")
+                print(f"  Expert Target: x={sample_target_np[0]:.2f}, rotation={sample_target_np[1]:.2f}")
+                print(f"  Model Output:  x={sample_output_np[0]:.2f}, rotation={sample_output_np[1]:.2f}")
+                print(f"--- End Sample Data ---")
+                printed_sample_this_epoch = True
 
             # 反向传播
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
+            # 累积损失
             train_loss += loss.item()
+            train_x_loss += x_loss.item()
+            train_rot_loss += rot_loss.item()
+
+            # 每20个批次打印一次详细信息
+            if batch_idx % 20 == 0:
+                print(f"\nBatch {batch_idx}:")
+                print(f"总损失: {loss.item():.4f}")
+                print(f"X坐标损失: {x_loss.item():.4f}")
+                print(f"旋转损失: {rot_loss.item():.4f}")
+                
+                # 打印一个样本的具体预测值
+                with torch.no_grad():
+                    print("\n样本预测:")
+                    print(f"预测值: X={outputs[0,0].item():.2f}, 旋转={outputs[0,1].item():.2f}")
+                    print(f"目标值: X={batch_moves[0,0].item():.2f}, 旋转={batch_moves[0,1].item():.2f}")
 
         # 验证阶段
         model.eval()
         val_loss = 0
+        val_x_loss = 0
+        val_rot_loss = 0
         with torch.no_grad():
             for batch_states, batch_moves in val_loader:
                 outputs = model(batch_states)
-                loss = criterion(outputs, batch_moves)
-                val_loss += loss.item()
-        
+                total_loss, x_loss, rot_loss = criterion(outputs, batch_moves)  # 解包返回的损失元组
+                val_loss += total_loss.item()  # 使用 total_loss
+                val_x_loss += x_loss.item()
+                val_rot_loss += rot_loss.item()
+    
         # 计算平均损失
-        avg_train_loss = train_loss / len(train_loader)
-        avg_val_loss = val_loss / len(val_loader)
-        
-        # 记录历史数据
-        train_loss_history.append(avg_train_loss)
-        val_loss_history.append(avg_val_loss)
-        learning_rates_history.append(optimizer.param_groups[0]['lr'])
-        
-        # 更新学习率调度器
-        scheduler.step(avg_val_loss)
-        
-        # 记录时间和输出信息
-        epoch_time = time.time() - epoch_start_time
-        print(f'轮数 {epoch+1}/{num_epochs}, 训练损失: {avg_train_loss:.4f}, 验证损失: {avg_val_loss:.4f}, 耗时: {epoch_time:.2f}秒')
-        
+        avg_train_loss = train_loss / len(train_loader) if len(train_loader) > 0 else 0
+        avg_val_loss = val_loss / len(val_loader) if len(val_loader) > 0 else 0
+
         # 检查是否有改进
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             best_model = model.state_dict().copy()
             epochs_no_improve = 0
-            # 保存最佳模型
             save_model(model, 'tetris_model_best.pth')
         else:
             epochs_no_improve += 1
@@ -490,6 +606,7 @@ def train_network(game_states, moves, num_epochs=100, batch_size=64, learning_ra
             print(f"早停: {patience}轮内验证损失没有改善")
             break
     
+    # 循环结束后的代码
     # 恢复最佳模型
     if best_model is not None:
         model.load_state_dict(best_model)
@@ -504,7 +621,6 @@ def train_network(game_states, moves, num_epochs=100, batch_size=64, learning_ra
         "learning_rates": learning_rates_history
     }
     # 确保 training_logs 目录存在
-    # 注意：train_full_model.py 已经创建了 training_logs 目录，这里检查是为了独立运行 train_network 时的稳健性
     logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "training_logs")
     if not os.path.exists(logs_dir):
         os.makedirs(logs_dir)
@@ -655,6 +771,11 @@ class TetrisAI:
         """创建游戏状态向量，与训练时相同格式"""
         # 展平游戏板 (20x10 = 200)
         board_vector = np.array(board, dtype=np.float32).flatten()
+
+        # 计算额外的启发式特征
+        height_val = np.array([get_height(board)], dtype=np.float32)
+        holes_val = np.array([count_holes(board)], dtype=np.float32)
+        bumpiness_val = np.array([get_bumpiness(board)], dtype=np.float32)
         
         # 将piece转换为4x4矩阵
         piece_matrix = np.zeros((4, 4), dtype=np.float32)
@@ -671,8 +792,8 @@ class TetrisAI:
         piece_matrix[start_h:start_h+h, start_w:start_w+w] = piece_array
         piece_vector = piece_matrix.flatten()  # 4x4 = 16
         
-        # 合并状态 (200 + 16 = 216)
-        return np.concatenate([board_vector, piece_vector])
+        # 合并状态 (200 + 1 + 1 + 1 + 16 = 219)
+        return np.concatenate([board_vector, height_val, holes_val, bumpiness_val, piece_vector])
 
 def run_single_game_for_ai(ai_agent, initial_board_state=None, max_steps=500, game_id=0, debug_prints=False):
     """
@@ -703,7 +824,7 @@ def run_single_game_for_ai(ai_agent, initial_board_state=None, max_steps=500, ga
         current_piece = deepcopy(current_piece_shape_config)
 
         if debug_prints:
-            print(f"\\n游戏 {game_id}, 步数 {move_idx + 1}/{max_steps}")
+            print(f"\n游戏 {game_id}, 步数 {move_idx + 1}/{max_steps}")
             # print_board(board) # Assuming print_board is available and defined
             # print(f"当前方块: {current_piece}")
 
@@ -830,15 +951,19 @@ def main():
             print("\\n=== 加载数据并训练模型 ===")
             data_filename = input(f"请输入训练数据文件名 (默认为 tetris_training_data.npz, 位于 {training_data_base_dir}): ") or 'tetris_training_data.npz'
             
-            game_states, moves = TetrisDataset.load_from_file(filename=data_filename) # Assumes load_from_file handles path correctly
-            print(f"加载数据: {len(game_states)} 个状态, {len(moves)} 个移动")
+            game_states_data, moves_data = TetrisDataset.load_from_file(filename=data_filename) # Assumes load_from_file handles path correctly
             
-            if game_states is not None and moves is not None and len(game_states) > 0:
-                print(f"成功加载 {len(game_states)} 个数据点。")
-                train_epochs = int(input("请输入训练轮数 (默认为100): ") or "100")
-                train_network(game_states, moves, num_epochs=train_epochs)
+            # Check if data loading was successful and data is valid
+            if game_states_data is not None and moves_data is not None and \
+               len(game_states_data) > 0 and len(moves_data) > 0 and \
+               len(game_states_data) == len(moves_data):
+                
+                print(f"成功加载数据: {len(game_states_data)} 个状态, {len(moves_data)} 个移动")
+                train_network(game_states_data, moves_data, num_epochs=100, batch_size=128, patience=20) 
             else:
-                print(f"加载数据失败或数据为空: {data_filename}")
+                loaded_gs_len = len(game_states_data) if game_states_data is not None else 0
+                loaded_m_len = len(moves_data) if moves_data is not None else 0
+                print(f"没有加载到有效数据、数据为空或状态与移动数量不匹配 (状态: {loaded_gs_len}, 移动: {loaded_m_len})，无法训练。请先收集数据 (模式1)。")
 
         elif mode == "3":
             print("\\n=== 测试模型 ===")
