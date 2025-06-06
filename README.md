@@ -2,6 +2,90 @@
 
 本项目是一个综合性的俄罗斯方块AI系统，包含三个独立的AI实现方法：监督学习系统、进化算法系统和强化学习系统。这些系统共用基础的游戏逻辑代码，但采用不同的方法来训练和优化AI模型。
 
+## 快速开始指南
+
+### 1. 环境准备
+
+```powershell
+# 克隆项目
+git clone https://github.com/your_username/Tetris.js.git
+cd Tetris.js
+
+# 安装全局依赖
+pip install -r requirements.txt
+```
+
+### 2. 选择系统并安装
+
+监督学习系统:
+
+```powershell
+cd supervised_learning
+# Windows环境
+.\setup.ps1
+# 或Linux/Mac环境
+./setup.sh
+```
+
+进化算法系统:
+
+```powershell
+cd evolutionary_learning
+pip install -r requirements.txt
+```
+
+强化学习系统:
+
+```powershell
+cd reinforcement_learning
+pip install -r requirements.txt
+```
+
+### 3. 启动程序
+
+每个子系统都使用其scripts目录下的启动脚本作为入口。
+
+监督学习系统:
+
+```powershell
+cd supervised_learning/scripts
+python start.py --train    # 训练新模型
+python start.py --test     # 测试模型
+python start.py --diagnose # 诊断模型问题
+python start.py --evaluate # 评估所有模型
+```
+
+进化算法系统:
+
+```powershell
+cd evolutionary_learning/scripts
+python start.py --train    # 训练新模型
+python start.py --test     # 测试模型
+python start.py --evaluate # 评估模型
+```
+
+强化学习系统:
+
+```powershell
+cd reinforcement_learning/scripts
+python train_rl_agent.py   # 训练新模型
+python play_rl_agent.py    # 运行游戏演示
+```
+
+### 4. 输出文件位置
+
+* 监督学习系统的模型保存在 `supervised_learning/models/`
+* 进化算法系统的权重保存在 `evolutionary_learning/models/`
+* 强化学习系统的模型保存在 `reinforcement_learning/models/`
+* 游戏截图保存在 `game_screenshots/` 目录
+
+### 5. 开发建议
+
+* 使用 `scripts/` 目录下的启动脚本进行日常操作
+* 核心算法在各系统的 `core/` 或 `src/` 目录中
+* 配置文件位于各系统的 `configs/` 目录
+* 使用 `tools/` 目录中的工具进行调试和分析
+
 ## 系统特点
 
 - **多样化的AI方法**: 实现了三种不同的AI训练方法，可以比较它们的优劣
@@ -93,26 +177,102 @@ python start.py --evaluate # 评估所有模型
    - 平均分数：15000+
    - 优势：性能最优，可持续进步
 
-## 安装和使用
+## 快速开始指南
 
-1. **克隆项目**:
-   ```bash
+1. **环境准备**:
+
+   ```powershell
+   # 克隆项目
    git clone https://github.com/your_username/Tetris.js.git
    cd Tetris.js
-   ```
-
-2. **安装依赖**:
-   ```bash
+   
+   # 安装全局依赖
    pip install -r requirements.txt
    ```
 
-3. **选择系统**:
-   - 监督学习: `cd supervised_learning`
-   - 进化算法: `cd evolutionary_learning`
-   - 强化学习: `cd reinforcement_learning`
+2. **系统选择与安装**:
 
-4. **运行系统**:
-   查看各子系统的README获取详细使用说明。
+   a) 监督学习系统:
+   ```powershell
+   cd supervised_learning
+   # Windows环境
+   .\setup.ps1
+   # 或Linux/Mac环境
+   ./setup.sh
+   ```
+
+   b) 进化算法系统:
+   ```powershell
+   cd evolutionary_learning
+   pip install -r requirements.txt
+   ```
+
+   c) 强化学习系统:
+   ```powershell
+   cd reinforcement_learning
+   pip install -r requirements.txt
+   ```
+
+3. **启动程序**:
+
+   每个子系统都使用其scripts目录下的start.py作为入口：
+
+   a) 监督学习系统:
+   ```powershell
+   cd supervised_learning/scripts
+   python start.py --train    # 训练新模型
+   python start.py --test     # 测试模型
+   python start.py --diagnose # 诊断模型问题
+   python start.py --evaluate # 评估所有模型
+   ```
+
+   b) 进化算法系统:
+   ```powershell
+   cd evolutionary_learning/scripts
+   python start.py --train    # 训练新模型
+   python start.py --test     # 测试模型
+   python start.py --evaluate # 评估模型
+   ```
+
+   c) 强化学习系统:
+   ```powershell
+   cd reinforcement_learning/scripts
+   python train_rl_agent.py   # 训练新模型
+   python play_rl_agent.py    # 运行游戏演示
+   ```
+
+4. **查看结果**:
+   - 监督学习系统的模型保存在 `supervised_learning/models/`
+   - 进化算法系统的权重保存在 `evolutionary_learning/models/`
+   - 强化学习系统的模型保存在 `reinforcement_learning/models/`
+   - 游戏截图保存在 `game_screenshots/` 目录
+
+5. **开发建议**:
+   - 使用 `scripts/` 目录下的启动脚本进行日常操作
+   - 核心算法在各系统的 `core/` 或 `src/` 目录中
+   - 配置文件位于各系统的 `configs/` 目录
+   - 使用 `tools/` 目录中的工具进行调试和分析
+
+## 常见问题解决
+
+1. **如果遇到模块导入错误**:
+   ```powershell
+   # 添加项目根目录到PYTHONPATH
+   $env:PYTHONPATH = "当前目录路径;$env:PYTHONPATH"
+   ```
+
+2. **如果需要清理训练数据**:
+   ```powershell
+   # 清理缓存和临时文件
+   Get-ChildItem -Recurse -Filter "__pycache__" | Remove-Item -Recurse -Force
+   Remove-Item "training_logs/*" -Recurse -Force
+   ```
+
+3. **如果需要重置环境**:
+   ```powershell
+   # 重新安装依赖
+   pip install -r requirements.txt --force-reinstall
+   ```
 
 ## 系统要求
 
@@ -121,13 +281,6 @@ python start.py --evaluate # 评估所有模型
 - NumPy
 - TensorFlow (可选，用于部分功能)
 - CUDA支持 (推荐，用于GPU加速)
-
-## 团队
-- 监督学习系统开发者
-- 进化算法系统开发者
-- 强化学习系统开发者
-- 游戏逻辑开发者
-- 项目指导老师
 
 ## 注意事项
 
